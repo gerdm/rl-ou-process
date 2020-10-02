@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+import xarray as xr
 from numpy.random import randn
 
 class QTrading:
@@ -40,51 +42,94 @@ class QTrading:
         self.xbar = xbar
         self.phi = phi
         self.gamma = gamma
+        self.c = c
         self.T = T
         self.dt = dt
         self.A = A
         self.B = B
         self.C = C
         self.D = D
-        self.inventory = np.arange(inventory_min, inventory_max)
-        self.actions = np.arange(buy_min, buy_max)
+        self.inventory_min = inventory_min
+        self.inventory_max = inventory_max
+        self.inventory = np.arange(inventory_min, inventory_max + 1)
+        self.actions = np.arange(buy_min, buy_max + 1)
+        self.action_space = self._initialize_df_action()
+        self.buckets = self._initialize_price_buckets()
+        self.Q = self._initialize_Q_matrix()
+        decimals = str(self.dt)
+        decimals = len(decimals[decimals.find(".") + 1:])
         
-    def simulate_ou_process(self):
-        """
-        Todo (Leo): generalizar a N simulaciones
-        Puntos extra por quitar todos los for loops
-        """
-        x0 = self.xbar
-        time = np.arange(0, self.T, self.dt)
-        nsteps = len(time)
-        x = np.zeros(nsteps)
-        x[0] = x0
-        errs = randn(nsteps - 1)
-        for t in range(nsteps - 1):
-            x[t + 1] = x[t] + self.dt * (self.kappa * (self.xbar - x[t])) +\
-            np.sqrt(self.dt) * self.sigma * errs[t]
         
-        return x
+    def _initialize_df_action(self):
+        action_space = self.actions[None, :] + self.inventory[:, None]
+        action_space = pd.DataFrame(action_space.copy(),
+                                    columns=self.actions, index=self.inventory)
 
+        return action_space
+    
+    
+    def _initialize_price_buckets(self, n=10, ndecimals=4):
+        upper_bound = self.xbar + n * self.sigma / np.sqrt(2 * self.kappa)
+        lower_bound = self.xbar - n * self.sigma / np.sqrt(2 * self.kappa)
+        bucket_size = self.sigma * np.sqrt(self.dt) / 4
+        buckets = np.arange(lower_bound, upper_bound, bucket_size).round(ndecimals)
+        
+        return buckets
+        
+    
+    def _initialize_Q_matrix(self):
+        n_timesteps = np.ceil(self.T / self.dt).astype(int)
+        n_bucket_prices = len(self.buckets)
+        n_inventory = len(self.inventory)
+        n_actions = len(self.actions)
+        
+        state_space = n_timesteps, n_bucket_prices, n_inventory, n_actions
+        Q = np.random.randn(*state_space) / 10
+        
 
-    def simulate_ou_process_forloop(self, nsims=1):
+        
+    def simulate_ou_process(self, x0=None, nsims=1):
+        x0 = self.xbar if x0 is None else x0
         time = np.arange(0, self.T, self.dt)
         nsteps = len(time)
         x = np.zeros((nsteps,nsims))
-        x[0,:] = self.x0
+        x[0,:] = x0
        
         errs = np.random.randn(nsteps - 1,nsims)
         for t in range(nsteps - 1):
-            x[t + 1,:] = x[t,:] + self.dt * (self.kappa * (self.xbar - x[t,:])) + np.sqrt(self.dt) * self.sigma * errs[t,:]
-       
+            x[t + 1,:] = (x[t,:] + self.dt * (self.kappa * (self.xbar - x[t,:]))
+                         + np.sqrt(self.dt) * self.sigma * errs[t,:])
+        
+        decimals = str(self.dt)
+        decimals = len(decimals[decimals.find(".") + 1:])
+        time = np.round(time, decimals)
         return time, x    
 
     
     def simulate_reward_matrix(self):
-        Xt = self.simulate_ou_process()
-        R = np.diff(Xt)[:, None, None] * self.inventory[None, :, None] - self.phi * self.actions[None, None, :]
+        reward_dimensions = ["timestep", "inventory", "action"]
+        timesteps, Xt = self.simulate_ou_process()
+        Xt = Xt.ravel()
+        R = (np.diff(Xt)[:, None, None] * self.inventory[None, :, None]
+          - self.phi * self.actions[None, None, :])
+        R[-1, :, :] = R[-1, :, :] - self.c * self.inventory[:, None]
+        R = xr.DataArray(R, coords=[timesteps[1:], self.inventory, self.actions],
+                          dims=reward_dimensions)
         
         return R
+    
+    
+    def get_possible_actions(self, q):
+        possible_actions = self.action_space.loc[q]
+        mapping = ((self.inventory_min <=  possible_actions) &
+                   (possible_actions <= self.inventory_max))
+        possible_actions = possible_actions[mapping]
+        return possible_actions
+    
+    
+    def step_in_episde(self, R):
+        pass
+        
     
     def q_learn(self):
         """

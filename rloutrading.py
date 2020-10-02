@@ -65,6 +65,20 @@ class QTrading:
             np.sqrt(self.dt) * self.sigma * errs[t]
         
         return x
+
+
+    def simulate_ou_process_forloop(self, nsims=1):
+        time = np.arange(0, self.T, self.dt)
+        nsteps = len(time)
+        x = np.zeros((nsteps,nsims))
+        x[0,:] = self.x0
+       
+        errs = np.random.randn(nsteps - 1,nsims)
+        for t in range(nsteps - 1):
+            x[t + 1,:] = x[t,:] + self.dt * (self.kappa * (self.xbar - x[t,:])) + np.sqrt(self.dt) * self.sigma * errs[t,:]
+       
+        return time, x    
+
     
     def simulate_reward_matrix(self):
         Xt = self.simulate_ou_process()

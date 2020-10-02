@@ -49,6 +49,7 @@ class QTrading:
         self.B = B
         self.C = C
         self.D = D
+        self.timesteps = self._initialize_timesteps()
         self.inventory_min = inventory_min
         self.inventory_max = inventory_max
         self.inventory = np.arange(inventory_min, inventory_max + 1)
@@ -56,8 +57,11 @@ class QTrading:
         self.action_space = self._initialize_df_action()
         self.buckets = self._initialize_price_buckets()
         self.Q = self._initialize_Q_matrix()
-        decimals = str(self.dt)
-        decimals = len(decimals[decimals.find(".") + 1:])
+        
+    def _initialize_timesteps(self):
+        time = np.arange(0, self.T, self.dt)
+        
+        return time
         
         
     def _initialize_df_action(self):
@@ -86,34 +90,31 @@ class QTrading:
         state_space = n_timesteps, n_bucket_prices, n_inventory, n_actions
         Q = np.random.randn(*state_space) / 10
         
-
+        
         
     def simulate_ou_process(self, x0=None, nsims=1):
         x0 = self.xbar if x0 is None else x0
-        time = np.arange(0, self.T, self.dt)
-        nsteps = len(time)
-        x = np.zeros((nsteps,nsims))
+        nsteps = len(self.timesteps)
+        x = np.zeros((nsteps, nsims))
         x[0,:] = x0
        
         errs = np.random.randn(nsteps - 1,nsims)
         for t in range(nsteps - 1):
             x[t + 1,:] = (x[t,:] + self.dt * (self.kappa * (self.xbar - x[t,:]))
                          + np.sqrt(self.dt) * self.sigma * errs[t,:])
-        
-        decimals = str(self.dt)
-        decimals = len(decimals[decimals.find(".") + 1:])
-        time = np.round(time, decimals)
-        return time, x    
+
+        return x
 
     
     def simulate_reward_matrix(self):
         reward_dimensions = ["timestep", "inventory", "action"]
-        timesteps, Xt = self.simulate_ou_process()
+        Xt = self.simulate_ou_process()
         Xt = Xt.ravel()
         R = (np.diff(Xt)[:, None, None] * self.inventory[None, :, None]
           - self.phi * self.actions[None, None, :])
         R[-1, :, :] = R[-1, :, :] - self.c * self.inventory[:, None]
-        R = xr.DataArray(R, coords=[timesteps[1:], self.inventory, self.actions],
+        R = xr.DataArray(R, coords=[self.timesteps[1:],
+                                    self.inventory, self.actions],
                           dims=reward_dimensions)
         
         return R

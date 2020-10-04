@@ -226,7 +226,7 @@ class QTrading:
         q = 0
         possible_actions = self.get_possible_actions(q)
         if pr < eps_k:
-            new_action, *_ = possible_actions.sample().index
+            new_action = np.random.choice(possible_actions)
         else:
             selection = self.get_position_indices(t, xt, q)
             possible_actions_bool = ((self.actions[:, None] - possible_actions[None, :]) == 0).any(axis=1)

@@ -98,12 +98,10 @@ class QTrading:
 
 
     def simulate_ou_process(self, x0=None, nsims=1, random_shock=False):
-        if x0 is None and random_shock is False:
-            x0 = self.xbar
-        elif random_shock is False:
-            x0 = x0
-        else:
+        if random_shock == True:
             x0 = np.random.choice(self.buckets)
+        else:
+            x0 = self.xbar
 
         nsteps = len(self.timesteps)
         x = np.zeros((nsteps, nsims))
@@ -177,6 +175,7 @@ class QTrading:
 
     def run_episode(self, iteration, random_shock=False):
         Xt, R = self.simulate_reward_matrix(random_shock=False)
+        R = R * 50
         Xt = self.buckets[np.digitize(Xt, self.buckets)]
         q = 0
         for it, t in enumerate(self.timesteps[:-1]):

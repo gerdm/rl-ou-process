@@ -95,16 +95,16 @@ class QTrading:
         n_actions = len(self.actions)
 
         state_space = n_timesteps, n_bucket_prices, n_inventory, n_actions
-        Q = np.random.randn(*state_space) / 10
+        Q = np.random.randn(*state_space) / 1000
         Q = xr.DataArray(Q, coords=coords, dims=dims)
         return Q
 
 
 
-    def simulate_ou_process(self, x0=None, nsims=1, random_shock=None):
-        if x0 is None and random_shock is None:
+    def simulate_ou_process(self, x0=None, nsims=1, random_shock=False):
+        if x0 is None and random_shock is False:
             x0 = self.xbar
-        elif random_shock is None:
+        elif random_shock is False:
             x0 = x0
         else:
             x0 = np.random.choice(self.buckets)
@@ -122,14 +122,14 @@ class QTrading:
         return x
 
 
-    def simulate_reward_matrix(self):
+    def simulate_reward_matrix(self, random_shock=False):
         # To-do (Leo): Generalize to N simulations
         reward_dimensions = ["timestep", "inventory", "action"]
-        Xt = self.simulate_ou_process()
+        Xt = self.simulate_ou_process(random_shock)
         Xt = Xt.ravel()
         R = (np.diff(Xt)[:, None, None] * self.inventory[None, :, None]
-          - self.phi * self.actions[None, None, :])
-        R[-1, :, :] = R[-1, :, :] - self.c * self.inventory[:, None]
+          - self.phi * self.actions[None, None, :] ** 2)
+        R[-1, :, :] = R[-1, :, :] - self.c * self.inventory[:, None] ** 2
         R = xr.DataArray(R, coords=[self.timesteps[1:],
                                     self.inventory, self.actions],
                           dims=reward_dimensions)
@@ -152,8 +152,8 @@ class QTrading:
         return possible_actions
 
 
-    def run_episode(self, iteration):
-        Xt, R = self.simulate_reward_matrix()
+    def run_episode(self, iteration, random_shock=False):
+        Xt, R = self.simulate_reward_matrix(random_shock=False)
         Xt = self.buckets[np.digitize(Xt, self.buckets)]
         q = 0
         for ix, t in enumerate(self.timesteps[:-1]):
@@ -174,8 +174,8 @@ class QTrading:
         selection_current = dict(time=t, inventory=q, price=xt, action=action)
         selection_next = dict(time=t_prime, inventory=q_prime, price=xt_prime)
 
-        Q_next = self.Q.loc[selection_next].values.max()
-        Q_current = self.Q.loc[selection_current]
+        Q_next = self.Q.sel(selection_next).values.max()
+        Q_current = self.Q.sel(selection_current)
 
         Q_update_value = (1 - alpha_k) * Q_current
         Q_update_value += alpha_k * (reward + self.gamma * Q_next)
@@ -215,12 +215,12 @@ class QTrading:
         return new_action, q_prime, Q_update_value
 
 
-    def q_learn(self, n_iterations):
+    def q_learn(self, n_iterations, random_shock=False):
         """
         to-do: implement
         """
         for iteration in tqdm(range(n_iterations)):
-            self.run_episode(iteration)
+            self.run_episode(iteration, random_shock=random_shock)
 
 
 if __name__ == "__main__":

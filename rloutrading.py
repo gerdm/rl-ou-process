@@ -68,11 +68,8 @@ class QTrading:
         time = np.round(time, 4)
         return time
 
-
     def _initialize_df_action(self):
         action_space = self.actions[None, :] + self.inventory[:, None]
-        action_space = pd.DataFrame(action_space.copy(),
-                                    columns=self.actions, index=self.inventory)
 
         return action_space
 
@@ -87,8 +84,6 @@ class QTrading:
 
 
     def _initialize_Q_matrix(self):
-        coords = [self.timesteps, self.buckets, self.inventory, self.actions]
-        dims = ["time", "price", "inventory", "action"]
         n_timesteps = np.ceil(self.T / self.dt).astype(int)
         n_bucket_prices = len(self.buckets)
         n_inventory = len(self.inventory)
@@ -96,7 +91,6 @@ class QTrading:
 
         state_space = n_timesteps, n_bucket_prices, n_inventory, n_actions
         Q = np.random.randn(*state_space) / 1000
-        Q = xr.DataArray(Q, coords=coords, dims=dims)
         return Q
 
 
@@ -130,9 +124,6 @@ class QTrading:
         R = (np.diff(Xt)[:, None, None] * self.inventory[None, :, None]
           - self.phi * self.actions[None, None, :] ** 2)
         R[-1, :, :] = R[-1, :, :] - self.c * self.inventory[:, None] ** 2
-        R = xr.DataArray(R, coords=[self.timesteps[1:],
-                                    self.inventory, self.actions],
-                          dims=reward_dimensions)
 
         return Xt, R
 
@@ -143,44 +134,76 @@ class QTrading:
     def learning_rate(self, iteration):
         return self.A / (self.B + iteration)
 
-
     def get_possible_actions(self, q):
-        possible_actions = self.action_space.loc[q]
-        mapping = ((self.inventory_min <=  possible_actions) &
-                   (possible_actions <= self.inventory_max))
-        possible_actions = possible_actions[mapping]
+        locate_q = self.action_space[(self.inventory==q).argmax(),:]
+        idx = ((self.inventory_min <=  locate_q) &
+                   (locate_q <= self.inventory_max))
+
+        
+        possible_actions = locate_q[idx] - q 
         return possible_actions
+
+
+    def get_position_indices(self, t, price=None, inventory=None, action=None):
+        """
+        **Check time overhead
+        (time, bucket_index, inventory_index, action_index)
+        """
+        if inventory is None:
+            raise ValueError("inventory cannot be None")
+        elif price is None and action is None:
+            raise ValueError("Price and action cannot be none")
+
+        if action is None:
+            i_t = (self.timesteps == t).argmax()
+            i_bucket = (self.buckets == price).argmax()
+            i_q = (self.inventory == inventory).argmax()
+            return i_t, i_bucket, i_q, slice(None)
+        elif price is None:
+            i_t = (self.timesteps == t).argmax()
+            i_q = (self.inventory == inventory).argmax()
+            i_action = (self.actions == action).argmax()
+            return i_t, slice(None), i_q, i_action
+        else:
+            i_t = (self.timesteps == t).argmax()
+            i_bucket = (self.buckets == price).argmax()
+            i_q = (self.inventory == inventory).argmax()
+            i_action = (self.actions == action).argmax()
+            return i_t, i_bucket, i_q, i_action
+
 
 
     def run_episode(self, iteration, random_shock=False):
         Xt, R = self.simulate_reward_matrix(random_shock=False)
         Xt = self.buckets[np.digitize(Xt, self.buckets)]
         q = 0
-        for ix, t in enumerate(self.timesteps[:-1]):
-            xt = Xt[ix]
-            xt_prime = Xt[ix + 1]
+        for it, t in enumerate(self.timesteps[:-1]):
+            xt = Xt[it]
+            xt_prime = Xt[it + 1]
             action, q, Q_update_value = self.step_in_episode(R, t, xt, xt_prime, q, iteration)
-            selection_current = dict(time=t, inventory=q, price=xt, action=action)
-            self.Q.loc[selection_current] = Q_update_value
 
+            selection_current = self.get_position_indices(it, xt, q, action)
+            self.Q[selection_current] = Q_update_value
 
 
     def get_Q_update_value(self, R, t, t_prime, xt, xt_prime, q, q_prime,
                            action, iteration):
         alpha_k = self.learning_rate(iteration)
-        reward = (R.sel(timestep=t_prime, inventory=q_prime,
-                       action=action).values.max())
 
-        selection_current = dict(time=t, inventory=q, price=xt, action=action)
-        selection_next = dict(time=t_prime, inventory=q_prime, price=xt_prime)
+        i_t, _, i_q, i_action = self.get_position_indices(t=t, inventory=q,
+            action=action)
+        reward = R[i_t, i_q, i_action]
 
-        Q_next = self.Q.sel(selection_next).values.max()
-        Q_current = self.Q.sel(selection_current)
+        selection_current = self.get_position_indices(t=t, inventory=q, price=xt, action=action)
+        selection_next = self.get_position_indices(t=t_prime, inventory=q_prime, price=xt_prime)
+
+        Q_next = self.Q[selection_next].max()
+        Q_current = self.Q[selection_current]
 
         Q_update_value = (1 - alpha_k) * Q_current
         Q_update_value += alpha_k * (reward + self.gamma * Q_next)
 
-        return Q_update_value.values.max()
+        return Q_update_value
 
 
     def step_in_episode(self, R, t, xt, xt_prime, q, iteration):
@@ -197,13 +220,18 @@ class QTrading:
         """
         eps_k = self.exploration_rate(iteration)
         pr = np.random.rand()
+        q = 0
         possible_actions = self.get_possible_actions(q)
-        if pr < eps_k:
+        #if pr < eps_k:
+        if False:
             new_action, *_ = possible_actions.sample().index
         else:
-            list_actions = self.Q.sel(time=t, inventory=q,
-                                      price=xt, action=possible_actions.index)
-            new_action = list_actions.idxmax().values.max()
+            selection = self.get_position_indices(t, xt, q)
+            possible_actions_bool = ((self.actions[:, None] - possible_actions[None, :]) == 0).any(axis=1)
+            list_actions = self.Q[selection].ravel()
+            list_actions[~possible_actions_bool] = -np.inf
+            new_action_ix = np.argmax(list_actions)
+            new_action = self.actions[new_action_ix]
 
         q_prime = q + new_action
         t_prime = np.round(t + self.dt, 4)

@@ -7,7 +7,8 @@ from tqdm import tqdm
 class QTrading:
     def __init__(self, kappa, sigma, xbar, phi, gamma, c,
                  T, dt, A, B, C, D, xmin=90, xmax=110, buy_min=-5,
-                 buy_max=5, inventory_min=-20, inventory_max=20):
+                 buy_max=5, inventory_min=-20, inventory_max=20,
+                 eps_0=0.1):
         """
         Constructor for the Q-learning program
 
@@ -49,6 +50,7 @@ class QTrading:
         self.B = B
         self.C = C
         self.D = D
+        self.eps_0 = eps_0
         self.timesteps = self._initialize_timesteps()
         self.inventory_min = inventory_min
         self.inventory_max = inventory_max
@@ -219,11 +221,11 @@ class QTrading:
             simulation iteration
         """
         eps_k = self.exploration_rate(iteration)
+        eps_k = max(eps_k, self.eps_0)
         pr = np.random.rand()
         q = 0
         possible_actions = self.get_possible_actions(q)
-        #if pr < eps_k:
-        if False:
+        if pr < eps_k:
             new_action, *_ = possible_actions.sample().index
         else:
             selection = self.get_position_indices(t, xt, q)

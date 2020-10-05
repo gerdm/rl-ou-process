@@ -8,7 +8,7 @@ class QTrading:
     def __init__(self, kappa, sigma, xbar, phi, gamma, c,
                  T, dt, A, B, C, D, xmin=90, xmax=110, buy_min=-5,
                  buy_max=5, inventory_min=-20, inventory_max=20,
-                 eps_0=0.1):
+                 eps_0=0.01):
         """
         Constructor for the Q-learning program
 
@@ -76,11 +76,12 @@ class QTrading:
         return action_space
 
 
-    def _initialize_price_buckets(self, n=10, ndecimals=4):
+    def _initialize_price_buckets(self, n=5, ndecimals=4):
         upper_bound = self.xbar + n * self.sigma / np.sqrt(2 * self.kappa)
         lower_bound = self.xbar - n * self.sigma / np.sqrt(2 * self.kappa)
-        bucket_size = self.sigma * np.sqrt(self.dt) / 4
+        bucket_size = self.sigma * np.sqrt(self.dt) / 0.5
         buckets = np.arange(lower_bound, upper_bound, bucket_size).round(ndecimals)
+        buckets = np.linspace(lower_bound, upper_bound, 40)
 
         return buckets
 
@@ -92,7 +93,7 @@ class QTrading:
         n_actions = len(self.actions)
 
         state_space = n_timesteps, n_bucket_prices, n_inventory, n_actions
-        Q = np.random.randn(*state_space) / 1000
+        Q = np.random.rand(*state_space) / 1000
         return Q
 
 
@@ -107,7 +108,7 @@ class QTrading:
         x = np.zeros((nsteps, nsims))
         x[0,:] = x0
 
-        errs = np.random.randn(nsteps - 1,nsims)
+        errs = np.random.randn(nsteps - 1, nsims)
         for t in range(nsteps - 1):
             x[t + 1,:] = (x[t,:] + self.dt * (self.kappa * (self.xbar - x[t,:]))
                          + np.sqrt(self.dt) * self.sigma * errs[t,:])
@@ -118,7 +119,6 @@ class QTrading:
 
     def simulate_reward_matrix(self, random_shock=False):
         # To-do (Leo): Generalize to N simulations
-        reward_dimensions = ["timestep", "inventory", "action"]
         Xt = self.simulate_ou_process(random_shock)
         Xt = Xt.ravel()
         R = (np.diff(Xt)[:, None, None] * self.inventory[None, :, None]
@@ -135,10 +135,9 @@ class QTrading:
         return self.A / (self.B + iteration)
 
     def get_possible_actions(self, q):
-        locate_q = self.action_space[(self.inventory==q).argmax(),:]
+        locate_q = self.action_space[(self.inventory == q).argmax(), :]
         idx = ((self.inventory_min <=  locate_q) &
-                   (locate_q <= self.inventory_max))
-
+                (locate_q <= self.inventory_max))
         
         possible_actions = locate_q[idx] - q 
         return possible_actions
@@ -175,23 +174,22 @@ class QTrading:
 
     def run_episode(self, iteration, random_shock=False):
         Xt, R = self.simulate_reward_matrix(random_shock=False)
-        R = R * 50
         Xt = self.buckets[np.digitize(Xt, self.buckets)]
         q = 0
         for it, t in enumerate(self.timesteps[:-1]):
             xt = Xt[it]
             xt_prime = Xt[it + 1]
-            action, q, Q_update_value = self.step_in_episode(R, t, xt, xt_prime, q, iteration)
-
+            action, q_prime, Q_update_value = self.step_in_episode(R, t, xt, xt_prime, q, iteration)
             selection_current = self.get_position_indices(it, xt, q, action)
             self.Q[selection_current] = Q_update_value
+            q = q_prime
 
 
     def get_Q_update_value(self, R, t, t_prime, xt, xt_prime, q, q_prime,
                            action, iteration):
         alpha_k = self.learning_rate(iteration)
 
-        i_t, _, i_q, i_action = self.get_position_indices(t=t, inventory=q,
+        i_t, _, i_q, i_action = self.get_position_indices(t=t, inventory=q_prime,
             action=action)
         reward = R[i_t, i_q, i_action]
 
@@ -222,7 +220,6 @@ class QTrading:
         eps_k = self.exploration_rate(iteration)
         eps_k = max(eps_k, self.eps_0)
         pr = np.random.rand()
-        q = 0
         possible_actions = self.get_possible_actions(q)
         if pr < eps_k:
             new_action = np.random.choice(possible_actions)
@@ -248,8 +245,14 @@ class QTrading:
         """
         to-do: implement
         """
-        for iteration in tqdm(range(n_iterations)):
-            self.run_episode(iteration, random_shock=random_shock)
+        try:
+            for iteration in tqdm(range(n_iterations)):
+                try:
+                    self.run_episode(iteration, random_shock=random_shock)
+                except IndexError:
+                    self.run_episode(iteration, random_shock=random_shock)
+        except KeyboardInterrupt:
+            print("...stoping process")
 
 
 if __name__ == "__main__":

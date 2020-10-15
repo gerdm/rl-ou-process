@@ -3,7 +3,8 @@ import pandas as pd
 import xarray as xr
 from numpy.random import randn
 from tqdm import tqdm
-                                     # Working version
+
+
 class QTrading:
     def __init__(self, kappa, sigma, xbar, phi, gamma, c,
                  T, dt, A, B, C, D, xmin=90, xmax=110, buy_min=-5,
@@ -159,8 +160,7 @@ class QTrading:
         return x
 
 
-    def simulate_reward_matrix(self, random_shock=False):
-        # To-do (Leo): Generalize to N simulations
+    def simulate_reward_matrix(self, random_shock=False):    
         Xt = self.simulate_ou_process(random_shock)
         Xt = Xt.ravel()
         R = (np.diff(Xt)[:, None, None] * self.inventory[None, :, None]
@@ -216,12 +216,12 @@ class QTrading:
     def run_episode(self, iteration, random_shock=False):
         Xt, R = self.simulate_reward_matrix(random_shock=random_shock)
         Xt = self.buckets[np.digitize(Xt, self.buckets)]
-        q = 0 #np.random.choice(self.inventory)
+        q = 0
         for it, t in enumerate(self.timesteps[:-1]):
             xt = Xt[it]
             xt_prime = Xt[it + 1]
             action, q_prime, Q_update_value = self.step_in_episode(R, it, t, xt, xt_prime, q, iteration)
-            selection_current = self.get_position_indices(t, xt, q, action) #error it had an "it" instead of t
+            selection_current = self.get_position_indices(t, xt, q, action)
             self.Q[selection_current] = Q_update_value
             q = q_prime
 

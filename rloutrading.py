@@ -1,10 +1,32 @@
 import numpy as np
 import pandas as pd
-import xarray as xr
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from collections import deque
 from numpy.random import randn
 from tqdm import tqdm
 
 
+class FFNet(nn.Module):
+    def __init__(self, n ):
+        super(FFNet, self).__init__()
+        
+        # 2 input layer (t,S), 1 output channel, 2 hidden layers with n units each
+        self.layer1 = nn.Linear(4, n)
+        self.layer2 = nn.Linear(n, n)
+        self.layer3 = nn.Linear(n, 1)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        h1 = self.relu(self.layer1(x))
+        h2 = self.relu(self.layer2(h1))
+        y = self.layer3(h2)
+        
+        return y
+
+
+# TO-DO: move init elements of Q-trading shared with DQNTrading into a parent class
 class QTrading:
     def __init__(self, kappa, sigma, xbar, phi, gamma, c,
                  T, dt, A, B, C, D, xmin=90, xmax=110, buy_min=-5,
@@ -70,7 +92,6 @@ class QTrading:
         self._Q = self._initialize_Q_matrix()
         self.big_n_Q_dimension = (len(self.timesteps) * len(self.buckets) *
                                   len(self.inventory) * len(self.actions))
-
 
     @property
     def Q(self):
@@ -263,7 +284,7 @@ class QTrading:
         eps_k = self.exploration_rate(iteration)
         eps_k = max(eps_k, self.eps_0)
         pr = np.random.rand()
-        possible_actions = self.get_possible_actions_zero_inventory_end(it,q)
+        possible_actions = self.get_possible_actions_zero_inventory_end(it, q)
         if pr < eps_k:
             new_action = np.random.choice(possible_actions)
         else:
@@ -293,6 +314,113 @@ class QTrading:
                     self.run_episode(iteration, random_shock=random_shock)
         except KeyboardInterrupt:
             print("...stoping process")
+
+
+class DQNTrading(QTrading):
+    def __init__(self, kappa, sigma, xbar, phi, gamma, c,
+                 T, dt, C, D, n_batches, config, buffer_size, xmin=90, xmax=110, buy_min=-5,
+                 buy_max=5, inventory_min=-20, inventory_max=20,
+                 eps_0=0.01, n_stdev_X=5, n_price=40, n_decimals_time=4,
+                 n_decimals_price=4, seed=None):
+        A, B = 1, 1
+        super().__init__(kappa, sigma, xbar, phi, gamma, c,
+                 T, dt, A, B, C, D, xmin, xmax, buy_min,
+                 buy_max, inventory_min, inventory_max,
+                 eps_0, n_stdev_X, n_price, n_decimals_time,
+                 n_decimals_price)
+        self.n_batches = n_batches
+        self.config = config
+        self.Q_ = FFNet(config)
+        self.replay_buffer = deque(maxlen=buffer_size)
+        self.optimizer = optim.Adam(self.Q_.parameters())
+        self.error_history = []
+
+
+    @property
+    def Q(self):
+        return self.Q_
+
+    def run_episode(self, iteration, random_shock=False):
+        Xt, R = self.simulate_reward_matrix(random_shock=random_shock)
+        Xt = self.buckets[np.digitize(Xt, self.buckets)]
+        q = 0
+        for it, t in enumerate(self.timesteps[:-1]):
+            xt = Xt[it]
+            xt_prime = Xt[it + 1]
+            action, q_prime, reward = self.step_in_episode(R, it, t, xt, xt_prime, q, iteration)
+            selection_current = self.get_position_indices(t, xt, q, action)
+            t_prime = t + self.dt
+            element_to_store = [(t, q, xt), action, reward, (t_prime, q_prime, xt_prime)]
+            self.replay_buffer.append(element_to_store)
+            self.learn_step(it)
+            q = q_prime
+
+    def step_in_episode(self, R, it, t, xt, xt_prime, q, iteration):
+        """
+
+        Paramters
+        ---------
+        R: xr.DataArray
+            Reward Matrix
+        q: int
+            current inventory
+        iteration: int
+            simulation iteration
+        """
+        eps_k = self.exploration_rate(iteration)
+        eps_k = max(eps_k, self.eps_0)
+        pr = np.random.rand()
+        possible_actions = self.get_possible_actions_zero_inventory_end(it, q)
+        if False:
+            new_action = np.random.choice(possible_actions)
+        else:
+            selection_input = torch.tensor([[t, xt, q, act] for act in possible_actions])
+            list_actions = self.Q.forward(selection_input.float())
+            Q_update_value = list_actions.max()
+            new_action = possible_actions[list_actions.argmax()]
+
+        q_prime = q + new_action
+        t_prime = np.round(t + self.dt, self.n_decimals_time)
+
+
+        i_t, _, i_q, i_action = self.get_position_indices(t=t, inventory=q_prime, action=new_action)
+        reward = R[i_t, i_q, i_action]
+        # Q_update_value = self.get_Q_update_value(R, t, t_prime, xt, xt_prime, q,
+        #                                         q_prime, new_action, iteration,
+        #                                         possible_actions)
+        return new_action, q_prime, reward
+
+
+    def learn_step(self, it):
+        buffer_size = len(self.replay_buffer)
+        buffer_samples_index = np.random.randint(0, buffer_size,
+                                                 size=self.n_batches)
+
+        total_error = 0
+        for sample_index in buffer_samples_index:
+            (t, q, xt), action, reward, (t_prime, q_prime, xt_prime) = self.replay_buffer[sample_index]
+
+            input_val = torch.tensor([t, q, xt, action]).float()
+            Q_pred = self.Q.forward(input_val)
+
+            list_actions = self.get_possible_actions_zero_inventory_end(it, q_prime)
+            input_val_star = torch.tensor([[t_prime, q_prime, xt_prime, act] for act in list_actions]).float()
+            action_best = list_actions[self.Q.forward(input_val_star).argmax()]
+
+            if t_prime == self.T:
+                Q_next = 0
+            else:
+              input_val = torch.tensor([t_prime, q_prime, xt_prime, action_best]).float()  
+              Q_next = self.Q.forward(input_val)
+
+
+            total_error = total_error + (reward + self.gamma * Q_next - Q_pred) ** 2
+
+        self.error_history.append(float(total_error))
+        total_error.backward()
+        self.optimizer.step()
+
+
             
             
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ class QTrading:
     def __init__(self, kappa, sigma, xbar, phi, gamma, c,
                  T, dt, A, B, C, D, xmin=90, xmax=110, buy_min=-5,
                  buy_max=5, inventory_min=-20, inventory_max=20,
-                 eps_0=0.01, n_stdev_X=5, n_price=40,n_decimals_time=4,n_decimals_price=4):
+                 eps_0=0.01, n_stdev_X=5, n_price=40, n_decimals_time=4,
+                 n_decimals_price=4):
         """
         Constructor for the Q-learning program
 
@@ -67,7 +68,8 @@ class QTrading:
         self.action_space = self._initialize_df_action()
         self.buckets = self._initialize_price_buckets()
         self._Q = self._initialize_Q_matrix()
-        self.big_n_Q_dimension = len(self.timesteps) * len(self.buckets) * len(self.inventory) * len(self.actions)
+        self.big_n_Q_dimension = (len(self.timesteps) * len(self.buckets) *
+                                  len(self.inventory) * len(self.actions))
 
 
     @property
@@ -291,8 +293,8 @@ class QTrading:
                     self.run_episode(iteration, random_shock=random_shock)
         except KeyboardInterrupt:
             print("...stoping process")
-
-
+            
+            
 if __name__ == "__main__":
     import json
     import sys

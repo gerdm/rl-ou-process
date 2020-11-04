@@ -354,6 +354,7 @@ class DQNTrading(QTrading):
             self.replay_buffer.append(element_to_store)
             self.learn_step(it)
             q = q_prime
+            self.optimizer.zero_grad()
 
     def step_in_episode(self, R, it, t, xt, xt_prime, q, iteration):
         """
@@ -371,7 +372,7 @@ class DQNTrading(QTrading):
         eps_k = max(eps_k, self.eps_0)
         pr = np.random.rand()
         possible_actions = self.get_possible_actions_zero_inventory_end(it, q)
-        if False:
+        if pr < eps_k:
             new_action = np.random.choice(possible_actions)
         else:
             selection_input = torch.tensor([[t, xt, q, act] for act in possible_actions])

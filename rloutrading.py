@@ -331,6 +331,8 @@ class DQNTrading(QTrading):
         self.n_batches = n_batches
         self.config = config
         self.Q_ = FFNet(config)
+        self.Q_T = FFNet(config)
+        self.Q_T.parameters = self.Q_.parameters
         self.replay_buffer = deque(maxlen=buffer_size)
         self.optimizer = optim.Adam(self.Q_.parameters())
         self.error_history = []
@@ -398,28 +400,53 @@ class DQNTrading(QTrading):
                                                  size=self.n_batches)
 
         total_error = 0
-        for sample_index in buffer_samples_index:
+
+        input_matrix = []
+        input_matrix_T = []
+        input_matrix_next = []
+
+        n_obs = len(buffer_samples_index)
+        n_max_actions = self.buy_max - self.buy_min + 1
+
+        input_matrix_T = torch.zeros(n_obs, n_max_actions, 4) * -float("inf")
+        all_actions = torch.arange(self.buy_min, self.buy_max + 1)
+        for i, sample_index in enumerate(buffer_samples_index):
             (t, q, xt), action, reward, (t_prime, q_prime, xt_prime) = self.replay_buffer[sample_index]
-
-            input_val = torch.tensor([t, q, xt, action]).float()
-            Q_pred = self.Q.forward(input_val)
-
             list_actions = self.get_possible_actions_zero_inventory_end(it, q_prime)
-            input_val_star = torch.tensor([[t_prime, q_prime, xt_prime, act] for act in list_actions]).float()
-            action_best = list_actions[self.Q.forward(input_val_star).argmax()]
 
-            if t_prime == self.T:
-                Q_next = 0
-            else:
-              input_val = torch.tensor([t_prime, q_prime, xt_prime, action_best]).float()  
-              Q_next = self.Q.forward(input_val)
+            input_matrix.append((t, q, xt, action))
+            possible_actions = [[t_prime, q_prime, xt_prime, act] for act in list_actions]
+            n_possible = len(possible_actions)
+            input_matrix_T[i, :n_possible, :] = torch.tensor(possible_actions)
+            input_matrix_next.append([t_prime, q_prime, xt_prime, 0])
 
+        input_matrix = torch.tensor(input_matrix).float()
+        input_matrix_T = torch.tensor(input_matrix_T).float()
+        input_matrix_next = torch.tensor(input_matrix_next).float()
+        Q_pred = self.Q.forward(input_matrix)
 
-            total_error = total_error + (reward + self.gamma * Q_next - Q_pred) ** 2
-
+        action_best = self.Q.forward(input_matrix_T)[..., -1]
+        action_best[action_best != action_best] = -float("inf")
+        action_best = all_actions[action_best.argmax(axis=-1)]
+        input_matrix_next[:, -1] = action_best 
+        Q_next = self.Q_T.forward(input_matrix_next)
+        total_error = torch.sum((reward + self.gamma * Q_next - Q_pred) ** 2)
+        
         self.error_history.append(float(total_error))
         total_error.backward()
         self.optimizer.step()
+
+    def q_learn(self, n_iterations, random_shock=False):
+        try:
+            for iteration in tqdm(range(n_iterations)):
+                if iteration % 10 == 0:
+                    self.Q_T.parameters = self.Q_.parameters
+                try:
+                    self.run_episode(iteration, random_shock=random_shock)
+                except IndexError:
+                    self.run_episode(iteration, random_shock=random_shock)
+        except KeyboardInterrupt:
+            print("...stoping process")
 
 
             

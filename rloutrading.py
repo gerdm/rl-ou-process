@@ -334,7 +334,7 @@ class DQNTrading(QTrading):
         self.Q_T = FFNet(config)
         self.Q_T.parameters = self.Q_.parameters
         self.replay_buffer = deque(maxlen=buffer_size)
-        self.optimizer = optim.Adam(self.Q_.parameters())
+        self.optimizer = optim.Adam(self.Q_.parameters(), lr=0.005, amsgrad=True)
         self.error_history = []
 
 
@@ -356,7 +356,9 @@ class DQNTrading(QTrading):
             self.replay_buffer.append(element_to_store)
             self.learn_step(it)
             q = q_prime
+            
             self.optimizer.zero_grad()
+            self.optimizer.step()
 
     def step_in_episode(self, R, it, t, xt, xt_prime, q, iteration):
         """
@@ -410,10 +412,12 @@ class DQNTrading(QTrading):
 
         input_matrix_T = torch.zeros(n_obs, n_max_actions, 4) * -float("inf")
         all_actions = torch.arange(self.buy_min, self.buy_max + 1)
+        rewards = torch.zeros(n_obs)
         for i, sample_index in enumerate(buffer_samples_index):
             (t, q, xt), action, reward, (t_prime, q_prime, xt_prime) = self.replay_buffer[sample_index]
             list_actions = self.get_possible_actions_zero_inventory_end(it, q_prime)
 
+            rewards[i] = reward
             input_matrix.append((t, q, xt, action))
             possible_actions = [[t_prime, q_prime, xt_prime, act] for act in list_actions]
             n_possible = len(possible_actions)
@@ -421,7 +425,6 @@ class DQNTrading(QTrading):
             input_matrix_next.append([t_prime, q_prime, xt_prime, 0])
 
         input_matrix = torch.tensor(input_matrix).float()
-        input_matrix_T = torch.tensor(input_matrix_T).float()
         input_matrix_next = torch.tensor(input_matrix_next).float()
         Q_pred = self.Q.forward(input_matrix)
 
@@ -430,11 +433,11 @@ class DQNTrading(QTrading):
         action_best = all_actions[action_best.argmax(axis=-1)]
         input_matrix_next[:, -1] = action_best 
         Q_next = self.Q_T.forward(input_matrix_next)
-        total_error = torch.sum((reward + self.gamma * Q_next - Q_pred) ** 2)
-        
+        total_error = torch.sum((rewards + self.gamma * Q_next - Q_pred) ** 2)
+
         self.error_history.append(float(total_error))
         total_error.backward()
-        self.optimizer.step()
+
 
     def q_learn(self, n_iterations, random_shock=False):
         try:

@@ -334,7 +334,7 @@ class DQNTrading(QTrading):
         self.Q_T = FFNet(config)
         self.Q_T.parameters = self.Q_.parameters
         self.replay_buffer = deque(maxlen=buffer_size)
-        self.optimizer = optim.Adam(self.Q_.parameters(), lr=0.005, amsgrad=True)
+        self.optimizer = optim.Adam(self.Q_.parameters())
         self.error_history = []
 
 
@@ -356,9 +356,6 @@ class DQNTrading(QTrading):
             self.replay_buffer.append(element_to_store)
             self.learn_step(it)
             q = q_prime
-            
-            self.optimizer.zero_grad()
-            self.optimizer.step()
 
     def step_in_episode(self, R, it, t, xt, xt_prime, q, iteration):
         """
@@ -386,7 +383,6 @@ class DQNTrading(QTrading):
 
         q_prime = q + new_action
         t_prime = np.round(t + self.dt, self.n_decimals_time)
-
 
         i_t, _, i_q, i_action = self.get_position_indices(t=t, inventory=q_prime, action=new_action)
         reward = R[i_t, i_q, i_action]
@@ -437,6 +433,8 @@ class DQNTrading(QTrading):
 
         self.error_history.append(float(total_error))
         total_error.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
 
     def q_learn(self, n_iterations, random_shock=False):

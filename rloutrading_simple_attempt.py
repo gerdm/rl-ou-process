@@ -108,27 +108,23 @@ class DQNTrading():
 
     def get_possible_actions_zero_inventory_end(self,it, q):
         
-        if it==(len(self.timesteps)):
+        if it == len(self.timesteps):
             possible_actions = np.array([0])
-            return possible_actions
-        elif it==(len(self.timesteps)-1):
+        elif it == len(self.timesteps) - 1:
             possible_actions = np.array([-q])
             possible_actions = np.clip(possible_actions, (self.buy_min) , (self.buy_max) ) 
-            return possible_actions
-        elif it==(len(self.timesteps)-2):
+        elif it == len(self.timesteps -2:
             locate_q = self.action_space[(self.inventory==q).argmax(),:]
             idx = ((self.buy_min <=  locate_q) &
                        (locate_q <= self.buy_max))
             possible_actions = locate_q[idx] - q 
-            return possible_actions
         else:
             locate_q = self.action_space[(self.inventory==q).argmax(),:]
             idx = ((self.inventory_min <=  locate_q) &
                        (locate_q <= self.inventory_max))
-
-
             possible_actions = locate_q[idx] - q 
-            return possible_actions
+        
+        return possible_actions
 
     def exploration_rate(self, iteration):
         return self.C / (self.D + iteration)
@@ -272,5 +268,3 @@ class DQNTrading():
         
         self.error_history.append(float(loss))
         
-
-

@@ -6,7 +6,7 @@ import torch.optim as optim
 from collections import deque
 from numpy.random import randn
 from tqdm import tqdm
-
+from math import ceil
 
 
 class FFNet(nn.Module):
@@ -107,13 +107,12 @@ class DQNTrading():
 
 
     def get_possible_actions_zero_inventory_end(self,it, q):
-        
         if it == len(self.timesteps):
             possible_actions = np.array([0])
         elif it == len(self.timesteps) - 1:
             possible_actions = np.array([-q])
             possible_actions = np.clip(possible_actions, (self.buy_min) , (self.buy_max) ) 
-        elif it == len(self.timesteps -2:
+        elif it == len(self.timesteps -2):
             locate_q = self.action_space[(self.inventory==q).argmax(),:]
             idx = ((self.buy_min <=  locate_q) &
                        (locate_q <= self.buy_max))
@@ -124,6 +123,25 @@ class DQNTrading():
                        (locate_q <= self.inventory_max))
             possible_actions = locate_q[idx] - q 
         
+        return possible_actions
+    
+    def get_possible_actions(self, it, q):
+        total_steps = len(self.timesteps)
+        filter_timestep = ceil(self.inventory_max / max(self.actions))
+        filter_timestep = total_steps - filter_timestep - 1
+
+        if it == total_steps:
+            return np.array([0])
+    
+        locate_q = self.action_space[(self.inventory==q).argmax(),:]
+        idx = (self.inventory_min <=  locate_q) & (locate_q <= self.inventory_max)
+        possible_actions = locate_q[idx] - q
+
+        if it >= filter_timestep:
+            take_actions = np.stack(np.meshgrid(*[self.actions for _ in range(total_steps - it)])).sum(axis=0)
+            filter_actions = self.actions[np.where(q + take_actions == 0)[0]]
+            possible_actions = np.intersect1d(take_actions, filter_actions)
+
         return possible_actions
 
     def exploration_rate(self, iteration):
